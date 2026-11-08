@@ -95,7 +95,7 @@ Vehicle list query parameters are `search`, `status`, `page` (default 0), and `s
 
 All vehicle and dashboard routes require `Authorization: Bearer <accessToken>`. Tokens are signed with `VMS_JWT_SECRET` and expire according to `VMS_JWT_ACCESS_TOKEN_LIFETIME` (default `PT24H`; `PT60H` means 60 hours). The API is stateless: it has no cookies, server sessions, or refresh tokens. Any valid authenticated account can access the vehicle and dashboard routes; role values are informational. Registration returns 201 with the created user only; registration does not automatically log the user in.
 
-`/actuator/health` remains the only exposed Actuator endpoint and is permitted without authentication. Health details are hidden. CORS permits `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS`, with `Content-Type` and `Authorization` headers. The local default origins are `http://localhost:3000` and `http://127.0.0.1:3000`, without credentialed cookies. Set `VMS_CORS_ALLOWED_ORIGINS` to a comma-separated list including the actual frontend origin for each environment; do not use `*` for deployment.
+`/actuator/health` remains the only exposed Actuator endpoint and is permitted without authentication. Health details are hidden. CORS permits `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS`, with `Content-Type` and `Authorization` headers. Local defaults allow `http://localhost` and `http://127.0.0.1` on any port, without credentialed cookies. The only accepted wildcard patterns are those two local loopback origins. For Render, set `VMS_CORS_ALLOWED_ORIGINS` to the exact Netlify frontend origin, such as `https://your-site.netlify.app`; do not use a wildcard for a deployed origin.
 
 ## Flutter integration handoff
 
@@ -107,7 +107,7 @@ All vehicle and dashboard routes require `Authorization: Bearer <accessToken>`. 
 - For a successful registration, show confirmation and route to login; there is no automatic login or email verification in this contract.
 - Encode `vehicleNumber` as one URL path segment for read/update/delete.
 
-For local Flutter Web development, the default CORS list supports port 3000. If using another port, set `VMS_CORS_ALLOWED_ORIGINS` before starting the backend. Set the production/demo frontend origin explicitly in that environment rather than committing it as a secret or relying on the local default.
+For local Flutter Web development, the default CORS list supports any HTTP port on `localhost` or `127.0.0.1`, including ports 5000 and 6000. For deployment, configure the exact Netlify origin in the Render backend environment using `VMS_CORS_ALLOWED_ORIGINS`. Keep local wildcard patterns out of deployed configuration.
 
 ## Part 2 verification
 

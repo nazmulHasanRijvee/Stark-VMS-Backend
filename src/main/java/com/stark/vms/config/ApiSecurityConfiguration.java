@@ -5,7 +5,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -24,14 +23,17 @@ public class ApiSecurityConfiguration {
 	@Bean
 	CorsConfigurationSource corsConfigurationSource(
 			@Value("${app.cors.allowed-origins}") String configuredOrigins) {
-		List<String> allowedOrigins = Arrays.stream(configuredOrigins.split(","))
+		List<String> allowedOriginPatterns = Arrays.stream(configuredOrigins.split(","))
 				.map(String::strip).filter(origin -> !origin.isEmpty()).toList();
-		if (allowedOrigins.isEmpty() || allowedOrigins.stream().anyMatch(origin -> origin.contains("*"))) {
-			throw new IllegalStateException("Configure explicit CORS origins in VMS_CORS_ALLOWED_ORIGINS.");
+		if (allowedOriginPatterns.isEmpty() || allowedOriginPatterns.stream().anyMatch(origin ->
+				origin.contains("*") && !origin.equals("http://localhost:*")
+						&& !origin.equals("http://127.0.0.1:*"))) {
+			throw new IllegalStateException(
+					"Configure exact CORS origins; port wildcards are allowed only for local loopback origins.");
 		}
 
 		CorsConfiguration configuration = new CorsConfiguration();
-		configuration.setAllowedOrigins(allowedOrigins);
+		configuration.setAllowedOriginPatterns(allowedOriginPatterns);
 		configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
 		configuration.setAllowedHeaders(List.of("Content-Type", "Authorization"));
 		configuration.setAllowCredentials(false);
