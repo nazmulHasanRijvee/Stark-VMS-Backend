@@ -1,159 +1,87 @@
 # Stark VMS Backend
 
-Separate Spring Boot backend for the Stark VMS Flutter Web application.
+A REST API for the Stark Vehicle Management System. It connects the Flutter Web client to PostgreSQL and supports the complete vehicle workflow: sign in, view vehicles, register, edit, and remove records.
 
-## Stack and package
+- **Deployment:** Render Docker Web Service with PostgreSQL.
+- **Development workflow:** Codex-assisted backend development and MCP server setup for connected development tools.
 
-- Java 21
-- Spring Boot 4.1.2
-- Maven Wrapper 3.3.4, configured to use Maven 3.10.0
-- Base package: `com.stark.vms`
-- PostgreSQL with Flyway versioned migrations
-- Hibernate validates the migrated schema; it does not update production or local schemas
+## Features
 
-## Local configuration
+- **Authentication:** Registration and login with BCrypt password hashing and signed, stateless JWT access tokens.
+- **Vehicle management:** Database-backed CRUD, search, status filtering, pagination, and dashboard counts.
+- **Duplicate protection:** Vehicle license numbers are trimmed and normalized before checks, with a PostgreSQL unique constraint as a final safeguard. Duplicates return a conflict response.
+- **Idempotent demo seeding:** Re-running the optional demo seeder adds only missing sample rows and does not reset an existing admin password. Seeding is off by default and excluded in production.
+- **Spring Security and CORS:** Protected API routes require a bearer token. CORS allows local Flutter development origins and can be limited to the exact deployed frontend origin in Render.
+- **Role groundwork:** `ROLE_USER` and `ROLE_ADMIN` are represented in accounts and tokens for future admin permissions. Currently both roles have the same vehicle access.
+- **Database migrations:** Flyway manages schema changes; Hibernate validates the migrated schema at startup.
 
-Keep local PostgreSQL settings in the ignored file `config/application-local.properties`, outside `src/main/resources`:
+## Technology
 
-```properties
-spring.datasource.url=jdbc:postgresql://localhost:5432/stark_vms
-spring.datasource.username=your_local_postgres_user
-spring.datasource.password=your_local_password
-```
+Java 21 | Spring Boot | Spring MVC and Security | Spring Data JPA | PostgreSQL | Flyway | JWT (Nimbus) | Maven | Docker | Render
 
-Activate the `local` profile in IntelliJ. For PowerShell, set the environment variables below and run `./mvnw.cmd spring-boot:run`. Spring Boot reads `config/application-local.properties` when the local profile is active.
+## Run locally
 
-The app now requires a strong JWT signing secret at startup. Generate 32 random bytes once, Base64-encode them, and store the result as `VMS_JWT_SECRET` in the IntelliJ run configuration or your process environment. Keep the same value between restarts so existing local tokens remain valid. The default access-token lifetime is 24 hours; override it with `VMS_JWT_ACCESS_TOKEN_LIFETIME`, using a Spring duration such as `PT24H`.
+### Prerequisites
 
-For example, generate a value in PowerShell with:
+- JDK 21
+- PostgreSQL, with a database such as `stark_vms` and a user that can access it
 
-```powershell
-$jwtKeyBytes = New-Object byte[] 32
-$jwtKeyGenerator = [Security.Cryptography.RandomNumberGenerator]::Create()
-$jwtKeyGenerator.GetBytes($jwtKeyBytes)
-$env:VMS_JWT_SECRET = [Convert]::ToBase64String($jwtKeyBytes)
-$jwtKeyGenerator.Dispose()
-```
+Set the connection and JWT values in your terminal or IDE run configuration. `VMS_JWT_SECRET` must be Base64-encoded random key material containing at least 32 bytes. Spring Boot does not load `.env` files automatically; `.env.example` is a variable-name reference.
 
-Set the `SPRING_PROFILES_ACTIVE` variable to `local`, then run:
+PowerShell example:
 
 ```powershell
+$env:SPRING_DATASOURCE_URL = "jdbc:postgresql://localhost:5432/stark_vms"
+$env:SPRING_DATASOURCE_USERNAME = "your_postgres_user"
+$env:SPRING_DATASOURCE_PASSWORD = "your_postgres_password"
+
+$jwtBytes = New-Object byte[] 32
+$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+$rng.GetBytes($jwtBytes)
+$env:VMS_JWT_SECRET = [Convert]::ToBase64String($jwtBytes)
+$rng.Dispose()
+
+$env:VMS_JWT_ACCESS_TOKEN_LIFETIME = "PT24H" # Optional; use PT60H for 60 hours
+$env:VMS_CORS_ALLOWED_ORIGINS = "http://localhost:*,http://127.0.0.1:*"
 ./mvnw.cmd spring-boot:run
 ```
 
-Spring Boot does not load `.env` files by itself. `.env.example` contains variable names and placeholders only; use process environment variables or a tool that explicitly loads `.env`. Never commit database passwords, JWT keys, or demo passwords.
+The API starts on `http://localhost:8080`. Flyway applies migrations on startup. Health check: `http://localhost:8080/actuator/health`. To run the automated checks, use `./mvnw.cmd test`.
 
-## Render deployment
+## Render configuration
 
-### Create the PostgreSQL database
+Create a Render PostgreSQL database and a Docker Web Service from this repository using the root `Dockerfile`. Keep both services in the same region and use the database's **internal** connection details. Set these environment variables on the web service:
 
-In Render, create a **PostgreSQL** database. Suggested values:
-
-- Render resource name: `stark-vms-db`
-- Database name: `stark_vms`
-- Database user: `stark_vms_app`
-- PostgreSQL major version: `18`
-- Region: choose the same region as the backend web service
-
-The Render resource name is a dashboard label. Choose the database name and user carefully because Render does not let you change those after creation. Use the database's **internal** host/connection details for the backend service; the database and web service must be in the same Render account and region for internal networking. This project expects the individual JDBC URL, username, and password variables below, not Render's raw `postgres://...` URL. Render uses port `5432` for PostgreSQL.
-
-If this will hold data you need to keep, choose a paid Postgres plan. Render's current Free Postgres plan expires after 30 days and has no backups; free web services also spin down after inactivity. See [Render's free-instance limitations](https://render.com/docs/free).
-
-### Create the web service
-
-Create a **Web Service** from the GitHub repository and select **Docker** as the runtime. Set the Dockerfile path to `./Dockerfile` and the Docker build context to the repository root. Render will build the image from the Dockerfile on deploy; leave custom build/start commands empty. Choose the same region as the database and set the health check path to `/actuator/health`. See the [Render Docker deployment guide](https://render.com/docs/docker).
-
-The app binds to `0.0.0.0` and reads Render's `PORT` environment variable; locally it falls back to port `8080`. Render web services default `PORT` to `10000`, so do not hard-code the service to 8080 in Render. See [Render web-service port binding](https://render.com/docs/web-services#port-binding).
-
-### Set backend environment variables
-
-In the web service's **Environment** page, add:
-
-| Key | Value |
+| Variable | Value |
 |---|---|
 | `SPRING_PROFILES_ACTIVE` | `production` |
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://<internal-host>:5432/stark_vms` |
-| `SPRING_DATASOURCE_USERNAME` | The database user shown in Render (for example, `stark_vms_app`) |
-| `SPRING_DATASOURCE_PASSWORD` | The database password shown in Render |
-| `VMS_JWT_SECRET` | A new Base64-encoded random key that decodes to at least 32 bytes; do not reuse the local development key |
-| `VMS_JWT_ACCESS_TOKEN_LIFETIME` | `PT60H` if retaining the configured 60-hour lifetime |
-| `VMS_CORS_ALLOWED_ORIGINS` | The exact Netlify origin, for example `https://your-site.netlify.app` (no path or trailing slash) |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://<internal-host>:5432/<database-name>` |
+| `SPRING_DATASOURCE_USERNAME` | Render database username |
+| `SPRING_DATASOURCE_PASSWORD` | Render database password |
+| `VMS_JWT_SECRET` | New Base64-encoded random key (at least 32 bytes); keep it secret |
+| `VMS_JWT_ACCESS_TOKEN_LIFETIME` | `PT60H` for a 60-hour access token, or your chosen duration |
+| `VMS_CORS_ALLOWED_ORIGINS` | Exact frontend origin, e.g. `https://your-site.netlify.app` |
 | `APP_SEED_DEMO_DATA` | `false` |
 
-Get `<internal-host>`, username, password, and database name from the Render Postgres **Connect** panel. Construct the URL with the `jdbc:postgresql://` prefix and the internal host; place username and password in their separate variables. Do not put credentials in the URL, Dockerfile, or GitHub. Do not set `PORT` manually; Render supplies it. The current CORS validator accepts exact deployed origins and the two local-only patterns, so use the exact Netlify site origin here.
+Render supplies the service port. The app binds to `0.0.0.0` and uses `PORT` when provided. Set the Render health check path to `/actuator/health`. Do not put database credentials or JWT secrets in source control.
 
-Flyway applies the versioned migrations when the application starts, then Hibernate validates the resulting schema. No manual table creation is needed. After deploy, check the service logs for a successful startup and open `/actuator/health`; the expected response is `{"status":"UP"}`.
+## API overview
 
-Demo seeding is disabled in production. Public registration creates `ROLE_USER`; there is no production admin bootstrap endpoint. The current API gives all authenticated users the same vehicle/dashboard access, so role labels do not grant additional permissions.
+Base path: `/api/v1`. Successful and error responses use a consistent JSON envelope.
 
-## Schema and migrations
+| Method | Endpoint | Access |
+|---|---|---|
+| `POST` | `/auth/register` | Public |
+| `POST` | `/auth/login` | Public; returns a JWT access token |
+| `GET` | `/vehicles` | Bearer token |
+| `GET` | `/vehicles/{vehicleNumber}` | Bearer token |
+| `POST` | `/vehicles` | Bearer token |
+| `PUT` | `/vehicles/{vehicleNumber}` | Bearer token |
+| `DELETE` | `/vehicles/{vehicleNumber}` | Bearer token |
+| `GET` | `/dashboard/stats` | Bearer token |
 
-Flyway migrations create `app_users` and `vehicles`, including generated numeric IDs, uniqueness constraints, required fields, canonical email/vehicle-number checks, allowed user roles, and the three allowed vehicle status values. Applied migrations are kept immutable; new schema changes use a new versioned migration. Database uniqueness races are translated to domain conflict exceptions.
+For protected routes, send `Authorization: Bearer <accessToken>`. CORS controls which browser origins may call the API; configure the exact frontend origin in Render. Local development defaults allow `localhost` and `127.0.0.1` on any port. API authentication is enforced separately by Spring Security.
 
-`spring.jpa.hibernate.ddl-auto=validate` checks that the migrated schema matches the entities. `spring.jpa.open-in-view` and SQL logging are disabled. The only exposed Actuator endpoint is `/actuator/health`, with health details hidden.
+## Project requirements covered
 
-## Domain and business logic
-
-- `auth`: `AppUser` / `app_users`, `AppUserRepository`, registration and login DTOs, `AuthService`, BCrypt password hashing, and Nimbus-based signed access tokens.
-- `vehicle`: `Vehicle` / `vehicles`, `VehicleRepository`, request and response DTOs, status values, and `VehicleService` create/read/update/delete operations.
-- `common.error`: domain validation, conflict, not-found, invalid-credential, and invalid-token exceptions.
-- `config`: password encoder, UTC clock, and explicitly enabled demo seeder.
-
-Emails are trimmed and lowercased with `Locale.ROOT` before lookup and storage. Vehicle numbers are trimmed and uppercased with `Locale.ROOT` for create, update, lookup, and duplicate checks. A duplicate race is handled by the unique database constraint and translated to the same domain exception as a pre-check duplicate.
-
-Registration accepts full name, email, and password, assigns `ROLE_USER`, hashes the password with BCrypt, and returns `UserResponse` without issuing a token. Login accepts `username` containing the email, verifies the password, and returns one signed JWT access token. The token includes user ID as subject, normalized email, role metadata, issue time, and expiration. `ROLE_ADMIN` and `ROLE_USER` are identity metadata only; they do not change vehicle permissions. The HTTP API uses stateless bearer authentication and has no refresh-token flow.
-
-## Demo data
-
-Demo rows are disabled by default. Enable them only in a local/demo environment with profile `demo` or `APP_SEED_DEMO_DATA=true`; set `VMS_DEMO_PASSWORD` to provide the seeded admin password. The default `demo` profile sets the seed property, and the seeder is excluded when `production` or `prod` is active. It creates the `admin@stark.com` classroom account and the four reference vehicles only when those rows are missing. An existing account's password is never reset.
-
-To combine the local database settings with demo data, activate `local,demo` in IntelliJ. Do not enable demo seeding in production.
-
-## Tests and build
-
-Run the tests and package the executable JAR with:
-
-```powershell
-./mvnw.cmd package
-```
-
-Tests use the `test` profile and an in-memory H2 database. Flyway applies all versioned migrations there; the tests do not need a developer's local PostgreSQL credentials or JWT secret.
-
-## REST API
-
-The API base path is `/api/v1`. All successful responses use `{ "success": true, "message": "...", "data": ... }`. Errors use `{ "success": false, "message": "...", "timestamp": "...", "fieldErrors": { ... } }`; `fieldErrors` is omitted when there are no field validation errors. Unexpected errors return a generic message and a correlation ID is logged for diagnosis. Responses do not expose persistence entities, password hashes, JWTs in errors, SQL details, or stack traces.
-
-| Method | Path | Access | Result |
-|---|---|---|---|
-| POST | `/api/v1/auth/register` | Public | 201; safe user only, no token |
-| POST | `/api/v1/auth/login` | Public | 200; access token and safe user inside `data` |
-| GET | `/api/v1/vehicles` | Bearer token | Search/filter page inside `data` |
-| GET | `/api/v1/vehicles/{vehicleNumber}` | Bearer token | Vehicle inside `data` |
-| POST | `/api/v1/vehicles` | Bearer token | 201; created vehicle inside `data` |
-| PUT | `/api/v1/vehicles/{vehicleNumber}` | Bearer token | 200; updated vehicle inside `data` |
-| DELETE | `/api/v1/vehicles/{vehicleNumber}` | Bearer token | 200; success envelope |
-| GET | `/api/v1/dashboard/stats` | Bearer token | Database-backed counts inside `data` |
-
-Vehicle list query parameters are `search`, `status`, `page` (default 0), and `size` (default 10, maximum 100). Search checks vehicle number, company name, brand, and model without case sensitivity. Status is an exact value: `Active`, `In Service`, or `Inactive`. Page data contains `content`, `page`, `size`, `totalElements`, and `totalPages`; ordering is `updatedAt` descending then `id` ascending. Vehicle responses include `id`, `createdAt`, and `updatedAt`; requests accept only `vehicleNumber`, `companyName`, `vehicleType`, `brand`, `model`, and `status`.
-
-All vehicle and dashboard routes require `Authorization: Bearer <accessToken>`. Tokens are signed with `VMS_JWT_SECRET` and expire according to `VMS_JWT_ACCESS_TOKEN_LIFETIME` (default `PT24H`; `PT60H` means 60 hours). The API is stateless: it has no cookies, server sessions, or refresh tokens. Any valid authenticated account can access the vehicle and dashboard routes; role values are informational. Registration returns 201 with the created user only; registration does not automatically log the user in.
-
-`/actuator/health` remains the only exposed Actuator endpoint and is permitted without authentication. Health details are hidden. CORS permits `GET`, `POST`, `PUT`, `DELETE`, and `OPTIONS`, with `Content-Type` and `Authorization` headers. Local defaults allow `http://localhost` and `http://127.0.0.1` on any port, without credentialed cookies. The only accepted wildcard patterns are those two local loopback origins. For Render, set `VMS_CORS_ALLOWED_ORIGINS` to the exact Netlify frontend origin, such as `https://your-site.netlify.app`; do not use a wildcard for a deployed origin.
-
-## Flutter integration handoff
-
-- Set `BASE_URL` to the backend origin plus `/api/v1`; ensure endpoint paths are joined without discarding that base path.
-- Send the login form's `username` value as the backend `username` field, where it contains the email address.
-- Unwrap the top-level `data` field before reading `accessToken`, `user`, vehicle, or page fields.
-- Save only `accessToken` for the current session; send `Authorization: Bearer <accessToken>` on protected calls and clear the session on 401.
-- Map API `companyName` to Flutter `company` and API `vehicleType` to Flutter `type` in the DTO/adapter.
-- For a successful registration, show confirmation and route to login; there is no automatic login or email verification in this contract.
-- Encode `vehicleNumber` as one URL path segment for read/update/delete.
-
-For local Flutter Web development, the default CORS list supports any HTTP port on `localhost` or `127.0.0.1`, including ports 5000 and 6000. For deployment, configure the exact Netlify origin in the Render backend environment using `VMS_CORS_ALLOWED_ORIGINS`. Keep local wildcard patterns out of deployed configuration.
-
-## Part 2 verification
-
-Part 2 verification previously passed with 21 tests, including H2/Flyway schema validation, normalization and duplicate checks, BCrypt, JWT expiry/signature and the configured 60-hour lifetime, demo idempotency, and production seed exclusion. The app also started against the local PostgreSQL `stark_vms` database with the IntelliJ JWT settings; Flyway was up to date, Hibernate validated the schema, and `/actuator/health` reported `UP`. Demo seeding was disabled during that check.
-
-For the current API implementation, run `./mvnw.cmd package`. Integration tests use the `test` profile and H2, exercise auth, validation, bearer protection, vehicle CRUD/search/paging, dashboard counts, and CORS, and do not require local PostgreSQL credentials. The latest `./mvnw.cmd package` completed successfully: 30 tests passed with no failures or errors, and the executable JAR was built. A smoke run of that JAR with the `local` profile connected to PostgreSQL and `/actuator/health` returned `UP`; demo seeding was disabled. The smoke run used a temporary JWT key and port and stopped its process afterward.
+The backend provides login, vehicle list and CRUD operations, Flutter Web REST integration, and persistent PostgreSQL data in place of mock vehicle records. It also validates duplicate vehicle numbers and includes migration, authentication, and deployment configuration for the application workflow.
