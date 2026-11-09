@@ -43,6 +43,49 @@ Set the `SPRING_PROFILES_ACTIVE` variable to `local`, then run:
 
 Spring Boot does not load `.env` files by itself. `.env.example` contains variable names and placeholders only; use process environment variables or a tool that explicitly loads `.env`. Never commit database passwords, JWT keys, or demo passwords.
 
+## Render deployment
+
+### Create the PostgreSQL database
+
+In Render, create a **PostgreSQL** database. Suggested values:
+
+- Render resource name: `stark-vms-db`
+- Database name: `stark_vms`
+- Database user: `stark_vms_app`
+- PostgreSQL major version: `18`
+- Region: choose the same region as the backend web service
+
+The Render resource name is a dashboard label. Choose the database name and user carefully because Render does not let you change those after creation. Use the database's **internal** host/connection details for the backend service; the database and web service must be in the same Render account and region for internal networking. This project expects the individual JDBC URL, username, and password variables below, not Render's raw `postgres://...` URL. Render uses port `5432` for PostgreSQL.
+
+If this will hold data you need to keep, choose a paid Postgres plan. Render's current Free Postgres plan expires after 30 days and has no backups; free web services also spin down after inactivity. See [Render's free-instance limitations](https://render.com/docs/free).
+
+### Create the web service
+
+Create a **Web Service** from the GitHub repository and select **Docker** as the runtime. Set the Dockerfile path to `./Dockerfile` and the Docker build context to the repository root. Render will build the image from the Dockerfile on deploy; leave custom build/start commands empty. Choose the same region as the database and set the health check path to `/actuator/health`. See the [Render Docker deployment guide](https://render.com/docs/docker).
+
+The app binds to `0.0.0.0` and reads Render's `PORT` environment variable; locally it falls back to port `8080`. Render web services default `PORT` to `10000`, so do not hard-code the service to 8080 in Render. See [Render web-service port binding](https://render.com/docs/web-services#port-binding).
+
+### Set backend environment variables
+
+In the web service's **Environment** page, add:
+
+| Key | Value |
+|---|---|
+| `SPRING_PROFILES_ACTIVE` | `production` |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://<internal-host>:5432/stark_vms` |
+| `SPRING_DATASOURCE_USERNAME` | The database user shown in Render (for example, `stark_vms_app`) |
+| `SPRING_DATASOURCE_PASSWORD` | The database password shown in Render |
+| `VMS_JWT_SECRET` | A new Base64-encoded random key that decodes to at least 32 bytes; do not reuse the local development key |
+| `VMS_JWT_ACCESS_TOKEN_LIFETIME` | `PT60H` if retaining the configured 60-hour lifetime |
+| `VMS_CORS_ALLOWED_ORIGINS` | The exact Netlify origin, for example `https://your-site.netlify.app` (no path or trailing slash) |
+| `APP_SEED_DEMO_DATA` | `false` |
+
+Get `<internal-host>`, username, password, and database name from the Render Postgres **Connect** panel. Construct the URL with the `jdbc:postgresql://` prefix and the internal host; place username and password in their separate variables. Do not put credentials in the URL, Dockerfile, or GitHub. Do not set `PORT` manually; Render supplies it. The current CORS validator accepts exact deployed origins and the two local-only patterns, so use the exact Netlify site origin here.
+
+Flyway applies the versioned migrations when the application starts, then Hibernate validates the resulting schema. No manual table creation is needed. After deploy, check the service logs for a successful startup and open `/actuator/health`; the expected response is `{"status":"UP"}`.
+
+Demo seeding is disabled in production. Public registration creates `ROLE_USER`; there is no production admin bootstrap endpoint. The current API gives all authenticated users the same vehicle/dashboard access, so role labels do not grant additional permissions.
+
 ## Schema and migrations
 
 Flyway migrations create `app_users` and `vehicles`, including generated numeric IDs, uniqueness constraints, required fields, canonical email/vehicle-number checks, allowed user roles, and the three allowed vehicle status values. Applied migrations are kept immutable; new schema changes use a new versioned migration. Database uniqueness races are translated to domain conflict exceptions.

@@ -1,0 +1,11 @@
+.git/
+.idea/
+target/
+**/target/
+build/
+config/
+application-local.properties
+**/application-local.properties
+.env
+.env.*
+*.log
