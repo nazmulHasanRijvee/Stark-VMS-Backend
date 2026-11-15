@@ -4,16 +4,13 @@ import com.stark.vms.common.error.DomainValidationException;
 import com.stark.vms.common.error.DuplicateVehicleNumberException;
 import com.stark.vms.common.error.UniqueConstraintViolation;
 import com.stark.vms.common.error.VehicleNotFoundException;
+import com.stark.vms.documents.VehicleDocumentService;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
-import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import jakarta.persistence.criteria.Predicate;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -21,9 +18,17 @@ import java.util.Locale;
 public class VehicleService {
 
 	private final VehicleRepository vehicles;
+	private final VehicleDocumentService documents;
 
-	public VehicleService(VehicleRepository vehicles) {
+	@Autowired
+	public VehicleService(VehicleRepository vehicles, VehicleDocumentService documents) {
 		this.vehicles = vehicles;
+		this.documents = documents;
+	}
+
+	// Kept for isolated service tests that exercise vehicle rules without storage.
+	public VehicleService(VehicleRepository vehicles) {
+		this(vehicles, null);
 	}
 
 	@Transactional
@@ -67,7 +72,8 @@ public class VehicleService {
 	}
 
 	@Transactional(readOnly = true)
-	public VehiclePageResponse search(String search, String status, int page, int size) {
+	public VehiclePageResponse search(String search, String status, int page, int size,
+			String sortBy, String sortDirection) {
 		if (page < 0) {
 			throw new DomainValidationException("Page must be zero or greater.");
 		}
@@ -75,36 +81,28 @@ public class VehicleService {
 			throw new DomainValidationException("Page size must be between 1 and 100.");
 		}
 
-		List<Specification<Vehicle>> filters = new ArrayList<>();
-		String normalizedSearch = search == null ? "" : search.strip().toLowerCase(Locale.ROOT);
-		if (!normalizedSearch.isEmpty()) {
-			String escapedSearch = normalizedSearch.replace("\\", "\\\\")
-					.replace("%", "\\%").replace("_", "\\_");
-			String pattern = "%" + escapedSearch + "%";
-			filters.add((root, query, criteriaBuilder) -> {
-				Predicate[] matches = new Predicate[] {
-						criteriaBuilder.like(criteriaBuilder.lower(root.get("vehicleNumber")), pattern, '\\'),
-						criteriaBuilder.like(criteriaBuilder.lower(root.get("companyName")), pattern, '\\'),
-						criteriaBuilder.like(criteriaBuilder.lower(root.get("brand")), pattern, '\\'),
-						criteriaBuilder.like(criteriaBuilder.lower(root.get("model")), pattern, '\\')
-				};
-				return criteriaBuilder.or(matches);
-			});
+		String normalizedSearch = search == null ? "" : search.strip();
+		if (sortBy != null && !sortBy.isBlank() && !List.of("vehicleNumber", "companyName", "vehicleType",
+				"brand", "model", "status", "updatedAt").contains(sortBy)) {
+			throw new DomainValidationException("Unsupported sort field.");
 		}
+		String direction = sortDirection == null || sortDirection.isBlank() ? "asc" : sortDirection.strip().toLowerCase(Locale.ROOT);
+		if (!direction.equals("asc") && !direction.equals("desc")) {
+			throw new DomainValidationException("Sort direction must be asc or desc.");
+		}
+		if ((sortBy == null || sortBy.isBlank()) && sortDirection != null && !sortDirection.isBlank()) {
+			throw new DomainValidationException("A sort field is required when a sort direction is supplied.");
+		}
+		VehicleStatus requestedStatus = null;
 		if (status != null && !status.isBlank()) {
-			VehicleStatus requestedStatus;
 			try {
 				requestedStatus = VehicleStatus.fromDisplayValue(status.strip());
 			} catch (IllegalArgumentException exception) {
-				throw new DomainValidationException("Status must be Active, In Service, or Inactive.");
+				throw new DomainValidationException("Status must be Active, Inactive, or Maintenance.");
 			}
-			filters.add((root, query, criteriaBuilder) -> criteriaBuilder.equal(root.get("status"), requestedStatus));
 		}
-
-		Specification<Vehicle> specification = filters.stream()
-				.reduce(Specification::and).orElse((root, query, criteriaBuilder) -> criteriaBuilder.conjunction());
-		Sort sort = Sort.by(Sort.Order.desc("updatedAt"), Sort.Order.asc("id"));
-		Page<Vehicle> result = vehicles.findAll(specification, PageRequest.of(page, size, sort));
+		Page<Vehicle> result = vehicles.search(normalizedSearch, requestedStatus, page, size,
+				sortBy == null || sortBy.isBlank() ? null : sortBy, direction);
 		return VehiclePageResponse.from(result);
 	}
 
@@ -112,6 +110,9 @@ public class VehicleService {
 	public void delete(String vehicleNumber) {
 		Vehicle vehicle = vehicles.findByVehicleNumber(normalizeVehicleNumber(vehicleNumber))
 				.orElseThrow(VehicleNotFoundException::new);
+		if (documents != null) {
+			documents.deleteForVehicle(vehicle);
+		}
 		vehicles.delete(vehicle);
 	}
 

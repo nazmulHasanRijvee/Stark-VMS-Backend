@@ -64,7 +64,7 @@ public class DemoDataSeeder implements ApplicationRunner {
 	private static List<SeedVehicle> seedVehicles() {
 		return List.of(
 				new SeedVehicle("DHAKA METRO GA-12-3456", "Stark Logistics", "Sedan", "Toyota", "Corolla", VehicleStatus.ACTIVE),
-				new SeedVehicle("DHAKA METRO CHA-55-9812", "Stark Agro", "Microbus / Van", "Nissan", "Urvan", VehicleStatus.IN_SERVICE),
+				new SeedVehicle("DHAKA METRO CHA-55-9812", "Stark Agro", "Microbus / Van", "Nissan", "Urvan", VehicleStatus.MAINTENANCE),
 				new SeedVehicle("DHAKA METRO BA-11-2233", "Stark Retail", "Sedan", "Honda", "Civic", VehicleStatus.ACTIVE),
 				new SeedVehicle("CHATTOGRAM METRO KHA-22-1100", "Stark Tech", "SUV", "Mitsubishi", "Pajero", VehicleStatus.INACTIVE)
 		);

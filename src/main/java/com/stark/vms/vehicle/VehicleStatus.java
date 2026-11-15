@@ -5,8 +5,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 public enum VehicleStatus {
 	ACTIVE("Active"),
-	IN_SERVICE("In Service"),
-	INACTIVE("Inactive");
+	INACTIVE("Inactive"),
+	MAINTENANCE("Maintenance");
 
 	private final String displayValue;
 

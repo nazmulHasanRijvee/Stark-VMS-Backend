@@ -8,6 +8,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 
 import java.time.Clock;
+import java.time.ZoneId;
 
 @Configuration
 public class CoreSecurityConfiguration {
@@ -20,6 +21,11 @@ public class CoreSecurityConfiguration {
 	@Bean
 	Clock applicationClock() {
 		return Clock.systemUTC();
+	}
+
+	@Bean
+	ZoneId businessTimeZone(@org.springframework.beans.factory.annotation.Value("${app.business-time-zone:Asia/Dhaka}") String zone) {
+		return ZoneId.of(zone);
 	}
 
 	@Bean

@@ -31,8 +31,10 @@ public class VehicleController {
 			@RequestParam(required = false) String search,
 			@RequestParam(required = false) String status,
 			@RequestParam(defaultValue = "0") int page,
-			@RequestParam(defaultValue = "10") int size) {
-		VehiclePageResponse result = vehicleService.search(search, status, page, size);
+			@RequestParam(defaultValue = "10") int size,
+			@RequestParam(required = false) String sortBy,
+			@RequestParam(required = false) String sortDirection) {
+		VehiclePageResponse result = vehicleService.search(search, status, page, size, sortBy, sortDirection);
 		return ResponseEntity.ok(ApiResponse.success("Vehicles retrieved successfully", result));
 	}
 

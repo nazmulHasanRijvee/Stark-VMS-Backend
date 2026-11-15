@@ -17,6 +17,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.MultipartException;
 
 import java.util.Map;
 import java.util.TreeMap;
@@ -74,6 +76,26 @@ public class ApiExceptionHandler {
 	@ExceptionHandler(VehicleNotFoundException.class)
 	public ResponseEntity<ApiErrorResponse> handleNotFound(VehicleNotFoundException exception) {
 		return error(HttpStatus.NOT_FOUND, exception.getMessage(), null);
+	}
+
+	@ExceptionHandler(DocumentNotFoundException.class)
+	public ResponseEntity<ApiErrorResponse> handleDocumentNotFound(DocumentNotFoundException exception) {
+		return error(HttpStatus.NOT_FOUND, exception.getMessage(), null);
+	}
+
+	@ExceptionHandler(StorageUnavailableException.class)
+	public ResponseEntity<ApiErrorResponse> handleStorageUnavailable(StorageUnavailableException exception) {
+		return error(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), null);
+	}
+
+	@ExceptionHandler(MaxUploadSizeExceededException.class)
+	public ResponseEntity<ApiErrorResponse> handleUploadTooLarge(MaxUploadSizeExceededException exception) {
+		return error(HttpStatus.BAD_REQUEST, "Uploaded file must not exceed 10 MB.", null);
+	}
+
+	@ExceptionHandler(MultipartException.class)
+	public ResponseEntity<ApiErrorResponse> handleMultipartError(MultipartException exception) {
+		return error(HttpStatus.BAD_REQUEST, "The multipart request is invalid or the file could not be read.", null);
 	}
 
 	@ExceptionHandler({InvalidCredentialsException.class, InvalidAccessTokenException.class, AuthenticationException.class})
