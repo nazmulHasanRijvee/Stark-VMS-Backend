@@ -1,11 +1,16 @@
 package com.stark.vms.vehicle;
 
+import com.stark.vms.driver.Driver;
 import jakarta.persistence.Column;
 import jakarta.persistence.Convert;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.ForeignKey;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
@@ -39,6 +44,11 @@ public class Vehicle {
 	@Column(nullable = false, length = 32)
 	private VehicleStatus status;
 
+	@OneToOne(fetch = FetchType.LAZY)
+	@JoinColumn(name = "current_driver_id", unique = true,
+			foreignKey = @ForeignKey(name = "fk_vehicles_current_driver"))
+	private Driver currentDriver;
+
 	@Column(name = "created_at", nullable = false, updatable = false)
 	private Instant createdAt;
 
@@ -65,6 +75,16 @@ public class Vehicle {
 
 	public void rename(String vehicleNumber) {
 		this.vehicleNumber = vehicleNumber;
+	}
+
+	public void setCurrentDriver(Driver currentDriver) {
+		if (this.currentDriver != null && this.currentDriver != currentDriver) {
+			this.currentDriver.setAssignedVehicle(null);
+		}
+		this.currentDriver = currentDriver;
+		if (currentDriver != null) {
+			currentDriver.setAssignedVehicle(this);
+		}
 	}
 
 	@PrePersist
@@ -107,6 +127,10 @@ public class Vehicle {
 
 	public VehicleStatus getStatus() {
 		return status;
+	}
+
+	public Driver getCurrentDriver() {
+		return currentDriver;
 	}
 
 	public Instant getCreatedAt() {

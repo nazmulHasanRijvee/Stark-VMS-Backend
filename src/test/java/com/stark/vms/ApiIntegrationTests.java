@@ -10,6 +10,7 @@ import com.stark.vms.auth.AppUserRepository;
 import com.stark.vms.config.DemoDataSeeder;
 import com.stark.vms.documents.DocumentStorage;
 import com.stark.vms.documents.VehicleDocumentRepository;
+import com.stark.vms.driver.DriverRepository;
 import com.stark.vms.maintenance.VehicleMaintenanceRepository;
 import com.stark.vms.vehicle.Vehicle;
 import com.stark.vms.vehicle.VehicleRepository;
@@ -72,6 +73,8 @@ class ApiIntegrationTests {
 	@Autowired
 	private VehicleRepository vehicles;
 	@Autowired
+	private DriverRepository drivers;
+	@Autowired
 	private AppUserRepository users;
 	@Autowired
 	private VehicleDocumentRepository documents;
@@ -89,6 +92,7 @@ class ApiIntegrationTests {
 		documents.deleteAllInBatch();
 		maintenance.deleteAllInBatch();
 		vehicles.deleteAll();
+		drivers.deleteAll();
 		users.deleteAll();
 		storage.clear();
 		demoDataSeeder.run(new DefaultApplicationArguments(new String[0]));
@@ -343,6 +347,183 @@ class ApiIntegrationTests {
 				.andExpect(jsonPath("$.data.content[1].vehicleNumber").value("DHAKA METRO GA-12-3456-ALT"))
 				.andExpect(jsonPath("$.data.content[2].vehicleNumber").value("X-DHAKA METRO GA-12-3456"))
 				.andExpect(jsonPath("$.data.content[3].vehicleNumber").value("OTHER-1"));
+	}
+
+	@Test
+	void driverCrudNormalizesLicenseRejectsDuplicatesAndSupportsPagedSearch() throws Exception {
+		String authorization = "Bearer " + loginToken();
+		String create = """
+				{"name":"  Alex Driver ","phone":" +880 1700-123456 ","licenseNumber":"  ab-1234 ","licenseExpiry":"2028-07-31","status":"Active"}
+				""";
+		MvcResult created = mockMvc.perform(post(API + "/drivers").header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content(create))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.data.name").value("Alex Driver"))
+				.andExpect(jsonPath("$.data.licenseNumber").value("AB-1234"))
+				.andExpect(jsonPath("$.data.licenseExpiry").value("2028-07-31"))
+				.andExpect(jsonPath("$.data.status").value("Active"))
+				.andExpect(jsonPath("$.data.assignedVehicle").value(org.hamcrest.Matchers.nullValue()))
+				.andReturn();
+		long driverId = ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.data.id")).longValue();
+
+		mockMvc.perform(post(API + "/drivers").header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON)
+					.content("{\"name\":\"Duplicate\",\"phone\":\"123\",\"licenseNumber\":\"ab-1234\",\"licenseExpiry\":\"2028-07-31\",\"status\":\"Active\"}"))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.message").value("A driver with this license number already exists."));
+
+		mockMvc.perform(get(API + "/drivers/" + driverId).header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.id").value(driverId));
+		mockMvc.perform(get(API + "/drivers/999999").header("Authorization", authorization))
+				.andExpect(status().isNotFound());
+		mockMvc.perform(get(API + "/drivers").param("search", "ab-12").param("sortBy", "name")
+					.param("sortDirection", "asc").header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(1))
+				.andExpect(jsonPath("$.data.content[0].licenseNumber").value("AB-1234"));
+		mockMvc.perform(get(API + "/drivers?size=101").header("Authorization", authorization))
+				.andExpect(status().isBadRequest());
+		mockMvc.perform(get(API + "/drivers?sortBy=name%20desc").header("Authorization", authorization))
+				.andExpect(status().isBadRequest());
+		mockMvc.perform(get(API + "/drivers?status=active").header("Authorization", authorization))
+				.andExpect(status().isBadRequest());
+		mockMvc.perform(put(API + "/drivers/" + driverId).header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content("{}"))
+				.andExpect(status().isBadRequest())
+				.andExpect(jsonPath("$.fieldErrors.name").exists());
+
+		String update = """
+				{"name":"Alex D.","phone":"+8801700123456","licenseNumber":"ab-1234","licenseExpiry":"2029-01-15","status":"Inactive"}
+				""";
+		mockMvc.perform(put(API + "/drivers/" + driverId).header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content(update))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.status").value("Inactive"))
+				.andExpect(jsonPath("$.data.licenseExpiry").value("2029-01-15"));
+		mockMvc.perform(delete(API + "/drivers/" + driverId).header("Authorization", authorization))
+				.andExpect(status().isOk());
+		mockMvc.perform(get(API + "/drivers")).andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void driverAssignmentIsAtomicEligibleIdempotentAndVehicleDeleteReleasesDriver() throws Exception {
+		String authorization = "Bearer " + loginToken();
+		long firstDriver = createDriver(authorization, "First Driver", "LIC-100", "Active");
+		long secondDriver = createDriver(authorization, "Second Driver", "LIC-200", "Active");
+		long inactiveDriver = createDriver(authorization, "Inactive Driver", "LIC-300", "Inactive");
+		String vehicleBody = """
+				{"vehicleNumber":"DRIVER ASSIGNMENT-1","companyName":"Stark Fleet","vehicleType":"Van","brand":"Toyota","model":"Hiace","status":"Active"}
+				""";
+		mockMvc.perform(post(API + "/vehicles").header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content(vehicleBody))
+				.andExpect(status().isCreated());
+
+		URI firstAssignment = URI.create(API + "/vehicles/DHAKA%20METRO%20GA-12-3456/driver");
+		mockMvc.perform(put(firstAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":999999}"))
+				.andExpect(status().isNotFound());
+		URI missingVehicleAssignment = URI.create(API + "/vehicles/MISSING-VEHICLE/driver");
+		mockMvc.perform(put(missingVehicleAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + firstDriver + "}"))
+				.andExpect(status().isNotFound());
+		mockMvc.perform(put(firstAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + firstDriver + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedDriver.id").value(firstDriver));
+		mockMvc.perform(get(URI.create(API + "/vehicles/DHAKA%20METRO%20GA-12-3456"))
+					.header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedDriver.id").value(firstDriver));
+		mockMvc.perform(get(API + "/vehicles").param("search", "DHAKA METRO GA-12-3456")
+					.header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.content[0].assignedDriver.id").value(firstDriver));
+		mockMvc.perform(put(firstAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + firstDriver + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedDriver.id").value(firstDriver));
+		mockMvc.perform(put(firstAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + inactiveDriver + "}"))
+				.andExpect(status().isConflict());
+
+		URI secondAssignment = URI.create(API + "/vehicles/DRIVER%20ASSIGNMENT-1/driver");
+		mockMvc.perform(put(secondAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + firstDriver + "}"))
+				.andExpect(status().isConflict());
+		mockMvc.perform(put(firstAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + secondDriver + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedDriver.id").value(secondDriver));
+		mockMvc.perform(put(secondAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + firstDriver + "}"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedDriver.id").value(firstDriver));
+		mockMvc.perform(get(API + "/drivers").param("search", "LIC-100")
+					.header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.totalElements").value(1))
+				.andExpect(jsonPath("$.data.content[0].assignedVehicle.vehicleNumber").value("DRIVER ASSIGNMENT-1"));
+		String assignedUpdate = """
+				{"name":"Second Driver","phone":"+8801700123456","licenseNumber":"LIC-200","licenseExpiry":"2028-07-31","status":"Inactive"}
+				""";
+		mockMvc.perform(put(API + "/drivers/" + secondDriver).header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content(assignedUpdate))
+				.andExpect(status().isConflict());
+		mockMvc.perform(delete(API + "/drivers/" + secondDriver).header("Authorization", authorization))
+				.andExpect(status().isConflict());
+
+		mockMvc.perform(delete(firstAssignment).header("Authorization", authorization))
+				.andExpect(status().isOk());
+		mockMvc.perform(delete(firstAssignment).header("Authorization", authorization))
+				.andExpect(status().isOk());
+		mockMvc.perform(delete(secondAssignment).header("Authorization", authorization))
+				.andExpect(status().isOk());
+		mockMvc.perform(put(secondAssignment).header("Authorization", authorization).contentType(MediaType.APPLICATION_JSON)
+					.content("{\"driverId\":" + secondDriver + "}"))
+				.andExpect(status().isOk());
+
+		byte[] pdf = "%PDF-1.7\nDriver vehicle document".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+		URI documentPath = URI.create(API + "/vehicles/DRIVER%20ASSIGNMENT-1/documents");
+		mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart(documentPath)
+					.file(new MockMultipartFile("file", "proof.pdf", "application/pdf", pdf))
+					.param("documentType", "Registration").header("Authorization", authorization))
+				.andExpect(status().isCreated());
+		assertEquals(1, storage.size());
+		mockMvc.perform(delete(URI.create(API + "/vehicles/DRIVER%20ASSIGNMENT-1"))
+					.header("Authorization", authorization))
+				.andExpect(status().isOk());
+		assertEquals(0, storage.size(), "deleting a vehicle must retain the existing document cleanup");
+		mockMvc.perform(get(API + "/drivers/" + secondDriver).header("Authorization", authorization))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.data.assignedVehicle").value(org.hamcrest.Matchers.nullValue()));
+	}
+
+	@Test
+	void allDriverAndAssignmentRoutesRequireBearerAuthentication() throws Exception {
+		String driver = "{\"name\":\"Route Check\",\"phone\":\"123\",\"licenseNumber\":\"ROUTE-1\",\"licenseExpiry\":\"2028-07-31\",\"status\":\"Active\"}";
+		String assignment = "{\"driverId\":1}";
+		mockMvc.perform(post(API + "/drivers").contentType(MediaType.APPLICATION_JSON).content(driver))
+				.andExpect(status().isUnauthorized());
+		mockMvc.perform(get(API + "/drivers")).andExpect(status().isUnauthorized());
+		mockMvc.perform(get(API + "/drivers/1")).andExpect(status().isUnauthorized());
+		mockMvc.perform(put(API + "/drivers/1").contentType(MediaType.APPLICATION_JSON).content(driver))
+				.andExpect(status().isUnauthorized());
+		mockMvc.perform(delete(API + "/drivers/1")).andExpect(status().isUnauthorized());
+		URI assignmentPath = URI.create(API + "/vehicles/DHAKA%20METRO%20GA-12-3456/driver");
+		mockMvc.perform(put(assignmentPath).contentType(MediaType.APPLICATION_JSON).content(assignment))
+				.andExpect(status().isUnauthorized());
+		mockMvc.perform(delete(assignmentPath)).andExpect(status().isUnauthorized());
+	}
+
+	private long createDriver(String authorization, String name, String licenseNumber, String status) throws Exception {
+		String request = """
+				{"name":"%s","phone":"+8801700123456","licenseNumber":"%s","licenseExpiry":"2028-07-31","status":"%s"}
+				""".formatted(name, licenseNumber, status);
+		MvcResult created = mockMvc.perform(post(API + "/drivers").header("Authorization", authorization)
+					.contentType(MediaType.APPLICATION_JSON).content(request))
+				.andExpect(status().isCreated()).andReturn();
+		return ((Number) JsonPath.read(created.getResponse().getContentAsString(), "$.data.id")).longValue();
 	}
 
 	@Test

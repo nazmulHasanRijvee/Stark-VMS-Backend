@@ -108,10 +108,14 @@ public class VehicleService {
 
 	@Transactional
 	public void delete(String vehicleNumber) {
-		Vehicle vehicle = vehicles.findByVehicleNumber(normalizeVehicleNumber(vehicleNumber))
+		Vehicle vehicle = vehicles.findLockedByVehicleNumber(normalizeVehicleNumber(vehicleNumber))
 				.orElseThrow(VehicleNotFoundException::new);
 		if (documents != null) {
 			documents.deleteForVehicle(vehicle);
+		}
+		if (vehicle.getCurrentDriver() != null) {
+			vehicle.setCurrentDriver(null);
+			vehicles.saveAndFlush(vehicle);
 		}
 		vehicles.delete(vehicle);
 	}

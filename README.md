@@ -1,6 +1,6 @@
 # Stark VMS Backend
 
-Spring Boot REST API for the Stark Vehicle Management System. It connects the Flutter Web client to PostgreSQL and implements authentication, vehicle management, document history, and maintenance records.
+Spring Boot REST API for the Stark Vehicle Management System. It connects the Flutter Web client to PostgreSQL and implements authentication, vehicle and driver management, current vehicle-driver assignment, document history, and maintenance records.
 
 - **Stack:** Java 21, Spring Boot, Spring Security, Spring Data JPA, PostgreSQL, Flyway, Nimbus JWT, Maven, Docker.
 - **Deployment:** Docker Web Service on Render with managed PostgreSQL; vehicle files are stored in a private Supabase Storage bucket.
@@ -14,6 +14,8 @@ Spring Boot REST API for the Stark Vehicle Management System. It connects the Fl
 - Vehicle states are `Active`, `Inactive`, and `Maintenance`. Adding a maintenance record does not change vehicle state.
 - Private vehicle document uploads, sanitized filenames, signature-verified PDF/JPEG/PNG files (maximum 10 MB), optional expiry dates, retained renewal history, and authenticated short-lived download URLs.
 - Maintenance history with date, type, non-negative BDT cost, workshop, and notes.
+- Driver CRUD with normalized unique license numbers, searchable/paginated listing, and current-vehicle summaries.
+- One-to-one current driver assignment per vehicle, with explicit assign/change/unassign routes and eligibility checks for Active drivers.
 - Idempotent demo seeding adds only missing records; it is disabled by default and excluded from production.
 - `ROLE_USER` and `ROLE_ADMIN` are represented in accounts and tokens for future authorization rules. Both currently have the same vehicle API access.
 
@@ -63,7 +65,7 @@ Get the endpoint, region, S3 access key ID, and secret access key from Supabase 
 
 ## API
 
-Base path: `/api/v1`. Auth and vehicle routes retain the common `{ success, message, data }` response envelope. All vehicle, document, maintenance, and dashboard routes require `Authorization: Bearer <accessToken>`; register and login are public.
+Base path: `/api/v1`. Routes use the common `{ success, message, data }` response envelope. All vehicle, driver, assignment, document, maintenance, and dashboard routes require `Authorization: Bearer <accessToken>`; register and login are public.
 
 | Method | Endpoint | Purpose |
 |---|---|---|
@@ -77,6 +79,11 @@ Base path: `/api/v1`. Auth and vehicle routes retain the common `{ success, mess
 | `GET` | `/vehicles/{vehicleNumber}/documents/{documentId}/download` | Create a short-lived signed download URL |
 | `POST` | `/vehicles/{vehicleNumber}/maintenance` | Add a maintenance record |
 | `GET` | `/vehicles/{vehicleNumber}/maintenance` | Paged maintenance history |
+| `POST` | `/drivers` | Create an unassigned driver |
+| `GET` | `/drivers` | Search and page drivers, including current vehicle summary |
+| `GET`, `PUT`, `DELETE` | `/drivers/{driverId}` | Read, update, or delete an unassigned driver |
+| `PUT` | `/vehicles/{vehicleNumber}/driver` | Assign or change the current driver using `{ "driverId": 12 }` |
+| `DELETE` | `/vehicles/{vehicleNumber}/driver` | Explicitly unassign the current driver; safe to repeat |
 
 Vehicle listing supports `search`, `status`, `page` (zero-based), `size` (maximum 100), `sortBy`, and `sortDirection` (`asc` or `desc`). Search covers vehicle number, company, type, brand, and model; without an explicit sort, vehicle-number matches rank first. Sort fields are `vehicleNumber`, `companyName`, `vehicleType`, `brand`, `model`, `status`, and `updatedAt`; the stable default is `updatedAt` descending then ID ascending.
 
@@ -84,8 +91,10 @@ Document types are `Registration`, `Tax Token`, `Insurance`, `Fitness Certificat
 
 Maintenance JSON fields are `maintenanceDate`, `maintenanceType`, `cost`, `workshop`, and optional `notes`. Dashboard expiry counts and alerts use only each vehicle/document type's latest version. Monthly maintenance count and cost use the current calendar month in the configured business time zone, and recent maintenance/expiry lists are bounded.
 
+Driver JSON fields are `name`, `phone`, `licenseNumber`, `licenseExpiry` (`YYYY-MM-DD`), and `status` (`Active` or `Inactive`). License numbers are trimmed, uppercased, and unique. Driver list parameters are `search` (case-insensitive across name, phone, license, and assigned vehicle number), `status`, `page` (zero-based), `size` (maximum 100), `sortBy` (`name`, `licenseExpiry`, `status`, or `createdAt`), and `sortDirection`. Default order is `createdAt` descending with ID ascending as a stable tie-breaker. Driver responses include nullable `assignedVehicle` (`vehicleNumber`, `brand`, `model`); vehicle responses include nullable `assignedDriver` (`id`, `name`, `phone`). Vehicle create/update payloads do not assign or clear drivers. Only Active unassigned drivers may be assigned; an assigned driver must be explicitly unassigned before deactivation or deletion. Invalid fields/status/page/sort values return 400, unknown drivers or vehicles return 404, and duplicate licenses or blocked assignment/deactivation/deletion return 409. No assignment history is stored, and all authenticated users share the existing fleet access.
+
 ## Database and safety
 
-Flyway migrations are forward-only. Assignment 2 migration converts existing `In Service` rows to `Maintenance` and adds document and maintenance tables. Vehicle document objects are removed through the Storage API before vehicle deletion; metadata uses foreign keys and indexed history queries. CORS is configured in Spring Security for local loopback origins in development and an exact frontend origin in production. CORS is a browser-origin policy; bearer-token authorization protects the API independently.
+Flyway migrations are forward-only. V3 converts existing `In Service` rows to `Maintenance` and adds document and maintenance tables; V4 adds drivers and the unique nullable current-driver relationship without changing prior rows. Vehicle document objects are removed through the Storage API before vehicle deletion; metadata uses foreign keys and indexed history queries. CORS is configured in Spring Security for local loopback origins in development and an exact frontend origin in production. CORS is a browser-origin policy; bearer-token authorization protects the API independently.
 
-Drivers, driver assignment, role administration, refresh tokens, and maintenance scheduling are outside this backend assignment.
+Role administration, refresh tokens, and maintenance scheduling remain outside this backend assignment.

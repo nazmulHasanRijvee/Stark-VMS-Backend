@@ -1,6 +1,9 @@
 package com.stark.vms.common.error;
 
 import com.stark.vms.common.api.ApiErrorResponse;
+import com.stark.vms.driver.DriverConflictException;
+import com.stark.vms.driver.DriverNotFoundException;
+import com.stark.vms.driver.DuplicateDriverLicenseException;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -68,13 +71,19 @@ public class ApiExceptionHandler {
 		return error(HttpStatus.BAD_REQUEST, "Request parameter is invalid.", Map.of(field, "Invalid or missing value."));
 	}
 
-	@ExceptionHandler({DuplicateEmailException.class, DuplicateVehicleNumberException.class})
+	@ExceptionHandler({DuplicateEmailException.class, DuplicateVehicleNumberException.class,
+			DuplicateDriverLicenseException.class, DriverConflictException.class})
 	public ResponseEntity<ApiErrorResponse> handleConflict(RuntimeException exception) {
 		return error(HttpStatus.CONFLICT, exception.getMessage(), null);
 	}
 
 	@ExceptionHandler(VehicleNotFoundException.class)
 	public ResponseEntity<ApiErrorResponse> handleNotFound(VehicleNotFoundException exception) {
+		return error(HttpStatus.NOT_FOUND, exception.getMessage(), null);
+	}
+
+	@ExceptionHandler(DriverNotFoundException.class)
+	public ResponseEntity<ApiErrorResponse> handleDriverNotFound(DriverNotFoundException exception) {
 		return error(HttpStatus.NOT_FOUND, exception.getMessage(), null);
 	}
 
